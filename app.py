@@ -1,51 +1,128 @@
-from flask import Flask, request, jsonify
-from search_documents import search_documents
-import redis
-import json
 import logging
+import threading
 import time
+import requests
+from bs4 import BeautifulSoup
+from flask import Flask, request, jsonify
+import chromadb
+from sentence_transformers import SentenceTransformer
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Initialize Flask app
 app = Flask(__name__)
 
-# Initialize Redis client
-redis_client = redis.Redis(host='localhost', port=6379, db=0)
+# Initialize the Sentence Transformer model
+model = SentenceTransformer('all-MiniLM-L6-v2')  # Replace with the model you are using
+
+# Initialize the ChromaDB client
+client = chromadb.Client()
 
 
-def cache_search_results(key, data, expiration=300):
-    # Cache the search results with a key and expiration time (in seconds)
-    redis_client.setex(key, expiration, json.dumps(data))
+# Function to encode text
+def embed_text(text):
+    return model.encode(text).tolist()
 
 
-def get_cached_results(key):
-    # Get cached results if they exist
-    cached_data = redis_client.get(key)
-    if cached_data:
-        return json.loads(cached_data)
-    return None
+# Store document in ChromaDB
+def store_document(title, link, embedding):
+    # Assuming you have a collection set up in ChromaDB
+    collection = client.get_or_create_collection('news_articles')
+    collection.insert({
+        'title': title,
+        'link': link,
+        'embedding': embedding
+    })
 
 
-def increment_user_requests(user_id, limit=5):
-    # Track the number of requests a user makes
-    key = f"user:{user_id}:requests"
-    request_count = redis_client.get(key)
+# Function to scrape articles
+def scrape_articles():
+    url = 'https://example.com/rss'  # Replace with an actual RSS feed or news site URL
+    response = requests.get(url)
+    soup = BeautifulSoup(response.content, 'xml')
 
-    if request_count:
-        request_count = int(request_count)
-        if request_count >= limit:
-            return False
-        redis_client.incr(key)
-    else:
-        # Set the initial request count and expiration time (e.g., 1 hour)
-        redis_client.setex(key, 3600, 1)
+    articles = []
+    for item in soup.find_all('item'):
+        title = item.title.text
+        link = item.link.text
+        description = item.description.text
 
+        articles.append({
+            'title': title,
+            'link': link,
+            'description': description
+        })
+    return articles
+
+
+# Function to store articles in the database
+def store_article(article):
+    title = article['title']
+    link = article['link']
+    description = article['description']
+
+    # Encode the description
+    embedding = embed_text(description)
+
+    # Store the article and its embedding in the database
+    store_document(title, link, embedding)
+
+
+# Background thread to scrape and store articles periodically
+def scrape_and_store():
+    while True:
+        try:
+            articles = scrape_articles()
+            # Update the database with new articles
+            for article in articles:
+                store_article(article)
+            logger.info(f"Scraped and stored {len(articles)} articles.")
+        except Exception as e:
+            logger.error(f"Error in scraping articles: {e}")
+
+        # Wait for a specified interval before scraping again (e.g., 1 hour)
+        time.sleep(3600)
+
+
+# Start the background thread
+scraper_thread = threading.Thread(target=scrape_and_store)
+scraper_thread.daemon = True  # Allows the thread to exit when the main program exits
+scraper_thread.start()
+
+
+# /health endpoint
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "API is active"}), 200
+
+
+# In-memory cache for simplicity
+cache = {}
+
+# Increment API call count for rate limiting
+user_requests = {}
+
+
+def increment_user_requests(user_id):
+    if user_id not in user_requests:
+        user_requests[user_id] = 0
+    user_requests[user_id] += 1
+
+    if user_requests[user_id] > 5:
+        return False
     return True
 
 
+def get_cached_results(cache_key):
+    return cache.get(cache_key)
+
+
+def cache_search_results(cache_key, results):
+    cache[cache_key] = results
+
+
+# /search endpoint
 @app.route('/search', methods=['POST'])
 def search():
     start_time = time.time()  # Start time for performance monitoring
@@ -87,10 +164,21 @@ def search():
     return jsonify({"cached": False, "results": search_results})
 
 
-@app.route('/health', methods=['GET'])
-def health():
-    # Simple endpoint to check if the API is running
-    return jsonify({"status": "API is running"}), 200
+# Placeholder function for searching documents in the database
+def search_documents(query_text, top_k=5):
+    # Encode the query text
+    query_embedding = embed_text(query_text)
+
+    # Placeholder: retrieve documents based on the query_embedding
+    # This is where you'd implement the logic to search in the ChromaDB database
+    # and return the top_k documents most similar to the query_embedding
+    # For now, let's return dummy data
+    results = [
+        {"title": "Dummy Article 1", "link": "http://example.com/1", "score": 0.9},
+        {"title": "Dummy Article 2", "link": "http://example.com/2", "score": 0.85},
+    ]
+
+    return results[:top_k]
 
 
 if __name__ == '__main__':
