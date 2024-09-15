@@ -7,15 +7,17 @@ WORKDIR /app
 # Copy the current directory contents into the container at /app
 COPY . /app
 
-# Install Flask inside the container
-RUN pip install flask
+# Install any needed packages specified in requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Make port 5000 available to the world outside this container
+# Install Redis client library
+RUN pip install redis
+
+# Expose port 5000 for the Flask app
 EXPOSE 5000
 
-# Define environment variable to prevent Python from buffering
-ENV PYTHONUNBUFFERED=1
+# Define environment variable
+ENV FLASK_APP=app.py
 
-# Run app.py when the container launches
-CMD ["python", "app.py"]
-
+# Run the command to start the Flask app
+CMD ["flask", "run", "--host=0.0.0.0"]
