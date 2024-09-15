@@ -1,45 +1,53 @@
-# app.py
-
 from flask import Flask, request, jsonify
-import chromadb
+from chromadb import Client
 from sentence_transformers import SentenceTransformer
+import chromadb.config as chroma_config
 
 app = Flask(__name__)
 
-# Initialize ChromaDB client and load model
-client = chromadb.Client()
-collection = client.get_collection(name='documents')
+# Initialize ChromaDB and SentenceTransformer
+chroma_client = Client(chroma_config.Settings(
+    chroma_dir='chroma_db',
+    persist_directory=True
+))
+collection = chroma_client.get_collection(name='documents')
 model = SentenceTransformer('distilbert-base-nli-stsb-mean-tokens')
 
 
-def search_similar_documents(query, top_k=5):
-    # Encode the query
-    query_embedding = model.encode(query).tolist()
+def search_documents(query_text, top_k=5):
+    # Encode the query text
+    query_embedding = model.encode(query_text).tolist()
 
-    # Perform similarity search
-    results = collection.find_similar(
-        'embedding', query_embedding, top_k=top_k
-    )
-    return results
+    # Query ChromaDB for the most similar documents
+    results = collection.query(embedding=query_embedding, top_k=top_k)
 
+    # Extract relevant metadata from results
+    extracted_results = [
+        {"id": result['id'], "text": result['metadata']['text'], "score": result['score']}
+        for result in results
+    ]
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    return jsonify({"status": "API is active"})
+    return extracted_results
 
 
 @app.route('/search', methods=['POST'])
 def search():
     data = request.json
-    text = data.get('text')
+    query_text = data.get('text')
     top_k = data.get('top_k', 5)
 
-    # Query ChromaDB for similar documents
-    results = search_similar_documents(text, top_k)
+    if not query_text:
+        return jsonify({"error": "Query text is required"}), 400
 
-    # Format results
-    response = [{'title': r['title'], 'content': r['content']} for r in results]
-    return jsonify(response)
+    # Perform the search
+    search_results = search_documents(query_text, top_k=top_k)
+
+    return jsonify(search_results)
+
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "API is active"}), 200
 
 
 if __name__ == '__main__':
