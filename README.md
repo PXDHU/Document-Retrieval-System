@@ -1,5 +1,3 @@
-# 21BAI1713
- Ai Intern Task
 # Document Retrieval System
 
 ## Overview
