@@ -13,7 +13,7 @@ This document retrieval system provides a backend for retrieving documents to be
 
 1. **Clone the repository:**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/PXDHU/Document-Retrieval-System
    ```
 
 2. **Navigate to the project directory:**
